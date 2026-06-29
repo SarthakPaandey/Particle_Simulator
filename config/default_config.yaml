@@ -1,0 +1,28 @@
+lattice:
+  n_cells: 12
+  drift_length: 1.0
+  quad_focal_length: 8.0
+  bpms_per_cell: 1
+  correctors_per_cell: 1
+
+beam:
+  initial_offset_mm: 2.0
+  initial_angle_mrad: 0.1
+
+errors:
+  random_seed: 42
+  error_kick_sigma_mrad: 0.05
+  add_random_errors: true
+  bpm_noise_sigma_mm: 0.02
+  add_bpm_noise: true
+
+correction:
+  method: svd
+  delta_theta_mrad: 0.1
+  svd_cutoff: 1.0e-4
+  n_singular_values: null
+  gain: 0.8
+  max_iterations: 5
+  tolerance_mm: 0.05
+  corrector_limit_mrad: 5.0
+  apply_limits: true
