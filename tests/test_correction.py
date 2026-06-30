@@ -1,12 +1,11 @@
-"""Unit tests for orbit correction algorithms."""
+"""Unit tests for orbit correction algorithms in 4D."""
 import numpy as np
 import pytest
 
 from src.beam import BeamState
 from src.lattice import build_fodo_lattice
 from src.tracking import track_beam, compute_response_matrix
-from src.correction import least_squares_correction, svd_correction, iterative_correction
-from src.errors import generate_error_kicks
+from src.correction import least_squares_correction, svd_correction, iterative_correction, micado_correction
 from src.metrics import rms_error
 
 
@@ -14,8 +13,10 @@ from src.metrics import rms_error
 def sim_setup():
     lattice = build_fodo_lattice(n_cells=4, bpms_per_cell=1, correctors_per_cell=1)
     rng = np.random.default_rng(42)
-    kicks = generate_error_kicks(len(lattice), error_sigma=5e-5, seed=42)
-    traj = track_beam(lattice, BeamState(x=2e-3, xp=0.1e-3), None, kicks, False, 0.0, rng)
+    from src.errors import generate_lattice_error_kicks
+    kicks = generate_lattice_error_kicks(lattice, error_sigma=5e-5, kick_type="all", seed=42)
+    # Start with some 4D offsets/angles
+    traj = track_beam(lattice, BeamState(x=2e-3, xp=0.1e-3, y=1e-3, yp=-0.05e-3), None, kicks, False, 0.0, rng)
     R = compute_response_matrix(lattice, delta_theta=1e-4)
     return lattice, traj, R, kicks, rng
 
@@ -23,18 +24,19 @@ def sim_setup():
 class TestLeastSquaresCorrection:
     def test_improves_rms(self, sim_setup):
         lattice, traj, R, kicks, rng = sim_setup
-        bpm_error = traj.bpm_x_positions
+        bpm_error = np.concatenate([traj.bpm_x_positions, traj.bpm_y_positions])
         c, _, _, _ = least_squares_correction(R, bpm_error)
 
         # Apply correction
         traj_corr = track_beam(
-            lattice, BeamState(x=2e-3, xp=0.1e-3),
+            lattice, BeamState(x=2e-3, xp=0.1e-3, y=1e-3, yp=-0.05e-3),
             corrector_strengths=c,
             error_kicks=kicks,
             add_noise=False, bpm_noise_sigma=0.0, rng=rng,
         )
         rms_before = rms_error(bpm_error * 1000)
-        rms_after = rms_error(traj_corr.bpm_x_positions * 1000)
+        bpm_error_after = np.concatenate([traj_corr.bpm_x_positions, traj_corr.bpm_y_positions])
+        rms_after = rms_error(bpm_error_after * 1000)
         assert rms_after < rms_before or rms_before < 0.01  # trivially small case
 
     def test_output_shape(self, sim_setup):
@@ -47,17 +49,18 @@ class TestLeastSquaresCorrection:
 class TestSVDCorrection:
     def test_improves_rms(self, sim_setup):
         lattice, traj, R, kicks, rng = sim_setup
-        bpm_error = traj.bpm_x_positions
+        bpm_error = np.concatenate([traj.bpm_x_positions, traj.bpm_y_positions])
         c, U, s, Vt = svd_correction(R, bpm_error, cutoff=1e-4)
 
         traj_corr = track_beam(
-            lattice, BeamState(x=2e-3, xp=0.1e-3),
+            lattice, BeamState(x=2e-3, xp=0.1e-3, y=1e-3, yp=-0.05e-3),
             corrector_strengths=c,
             error_kicks=kicks,
             add_noise=False, bpm_noise_sigma=0.0, rng=rng,
         )
         rms_before = rms_error(bpm_error * 1000)
-        rms_after = rms_error(traj_corr.bpm_x_positions * 1000)
+        bpm_error_after = np.concatenate([traj_corr.bpm_x_positions, traj_corr.bpm_y_positions])
+        rms_after = rms_error(bpm_error_after * 1000)
         assert rms_after < rms_before or rms_before < 0.01
 
     def test_truncation_changes_result(self, sim_setup):
@@ -78,7 +81,7 @@ class TestIterativeCorrection:
         lattice, traj, R, kicks, rng = sim_setup
         c, rms_hist, niters = iterative_correction(
             lattice,
-            BeamState(x=2e-3, xp=0.1e-3),
+            BeamState(x=2e-3, xp=0.1e-3, y=1e-3, yp=-0.05e-3),
             R,
             method="svd",
             gain=0.8,
@@ -95,7 +98,7 @@ class TestIterativeCorrection:
         lattice, traj, R, kicks, rng = sim_setup
         c, rms_hist, _ = iterative_correction(
             lattice,
-            BeamState(x=2e-3, xp=0.1e-3),
+            BeamState(x=2e-3, xp=0.1e-3, y=1e-3, yp=-0.05e-3),
             R,
             method="svd",
             gain=0.8,
@@ -113,7 +116,7 @@ class TestIterativeCorrection:
 class TestDirectCorrectionLimits:
     def test_lsq_limited_correctors(self, sim_setup):
         lattice, traj, R, kicks, rng = sim_setup
-        bpm_error = traj.bpm_x_positions
+        bpm_error = np.concatenate([traj.bpm_x_positions, traj.bpm_y_positions])
         limit_val = 1e-6 # Choose a tiny limit so clipping definitely occurs
         c_unlim, _, _, _ = least_squares_correction(R, bpm_error)
         c_lim, _, _, _ = least_squares_correction(R, bpm_error, limit=limit_val)
@@ -126,7 +129,7 @@ class TestDirectCorrectionLimits:
 
     def test_svd_limited_correctors(self, sim_setup):
         lattice, traj, R, kicks, rng = sim_setup
-        bpm_error = traj.bpm_x_positions
+        bpm_error = np.concatenate([traj.bpm_x_positions, traj.bpm_y_positions])
         limit_val = 1e-6
         c_unlim, _, _, _ = svd_correction(R, bpm_error, cutoff=1e-4)
         c_lim, _, _, _ = svd_correction(R, bpm_error, cutoff=1e-4, limit=limit_val)
@@ -135,3 +138,31 @@ class TestDirectCorrectionLimits:
         if np.any(np.abs(c_unlim) > limit_val):
             assert not np.allclose(c_unlim, c_lim)
 
+
+class TestMicadoCorrection:
+    def test_improves_rms(self, sim_setup):
+        lattice, traj, R, kicks, rng = sim_setup
+        bpm_error = np.concatenate([traj.bpm_x_positions, traj.bpm_y_positions])
+        c, _ = micado_correction(R, bpm_error, n_correctors=3)
+
+        # Apply correction
+        traj_corr = track_beam(
+            lattice, BeamState(x=2e-3, xp=0.1e-3, y=1e-3, yp=-0.05e-3),
+            corrector_strengths=c,
+            error_kicks=kicks,
+            add_noise=False, bpm_noise_sigma=0.0, rng=rng,
+        )
+        rms_before = rms_error(bpm_error * 1000)
+        bpm_error_after = np.concatenate([traj_corr.bpm_x_positions, traj_corr.bpm_y_positions])
+        rms_after = rms_error(bpm_error_after * 1000)
+        assert rms_after < rms_before or rms_before < 0.01
+
+    def test_sparse_correctors(self, sim_setup):
+        _, traj, R, _, _ = sim_setup
+        bpm_error = np.concatenate([traj.bpm_x_positions, traj.bpm_y_positions])
+        n_keep = 3
+        c, _ = micado_correction(R, bpm_error, n_correctors=n_keep)
+
+        # Verify that at most n_keep correctors are active (non-zero)
+        n_act = np.sum(~np.isclose(c, 0.0))
+        assert n_act <= n_keep

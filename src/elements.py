@@ -23,7 +23,7 @@ class Element:
     s: float = 0.0
 
     def matrix(self) -> np.ndarray:
-        return np.eye(2)
+        return np.eye(4)
 
     def apply_kick(self, state: np.ndarray, kick_angle: float = 0.0) -> np.ndarray:
         """Apply an angular kick to the state (default: no-op).
@@ -44,7 +44,10 @@ class Drift(Element):
             raise ValueError("Drift length must be non-negative.")
 
     def matrix(self) -> np.ndarray:
-        return np.array([[1.0, self.length], [0.0, 1.0]])
+        M = np.eye(4)
+        M[0, 1] = self.length
+        M[2, 3] = self.length
+        return M
 
 
 @dataclass
@@ -56,7 +59,7 @@ class Quadrupole(Element):
     focal_length : float
         Focal length magnitude (meters); sign handled by ``focusing``.
     focusing : bool
-        If True, the magnet focuses in the horizontal plane.
+        If True, the magnet focuses in the horizontal plane (and defocuses in the vertical plane).
     """
 
     focal_length: float = 1.0
@@ -68,47 +71,57 @@ class Quadrupole(Element):
             raise ValueError("Quadrupole focal length must be non-zero.")
 
     def matrix(self) -> np.ndarray:
-        inv_f = -1.0 / self.focal_length if self.focusing else 1.0 / self.focal_length
-        return np.array([[1.0, 0.0], [inv_f, 1.0]])
+        inv_f_x = -1.0 / self.focal_length if self.focusing else 1.0 / self.focal_length
+        inv_f_y = 1.0 / self.focal_length if self.focusing else -1.0 / self.focal_length
+        M = np.eye(4)
+        M[1, 0] = inv_f_x
+        M[3, 2] = inv_f_y
+        return M
 
 
 @dataclass
 class BPM(Element):
-    """Beam Position Monitor: records beam x-position, no optics."""
+    """Beam Position Monitor: records beam x & y-position, no optics."""
 
     kind: str = "bpm"
     index: int = -1  # Filled by the lattice builder
 
     def matrix(self) -> np.ndarray:
-        return np.eye(2)
+        return np.eye(4)
 
 
 @dataclass
 class Corrector(Element):
-    """Corrector magnet: imparts an angular kick theta (radians)."""
+    """Corrector magnet: imparts an angular kick (radians) in the designated plane."""
 
     kind: str = "corrector"
     index: int = -1  # Filled by the lattice builder
     strength: float = 0.0  # Current kick angle in radians
+    plane: str = "x"  # "x" for horizontal, "y" for vertical
 
     def apply_kick(self, state: np.ndarray, kick_angle: Optional[float] = None) -> np.ndarray:
         theta = self.strength if kick_angle is None else kick_angle
         new_state = state.copy()
-        new_state[1, 0] += theta
+        if self.plane == "x":
+            new_state[1, 0] += theta
+        elif self.plane == "y":
+            new_state[3, 0] += theta
         return new_state
 
 
 @dataclass
 class ErrorKick(Element):
-    """Alignment / field error modelled as a random angular kick."""
+    """Alignment / field error modelled as random angular kicks in x and y."""
 
     kind: str = "error"
-    kick: float = 0.0
+    kick_x: float = 0.0
+    kick_y: float = 0.0
 
-    def apply_kick(self, state: np.ndarray, kick_angle: Optional[float] = None) -> np.ndarray:
-        k = self.kick if kick_angle is None else kick_angle
+    def apply_kick(self, state: np.ndarray, kick_angles: Optional[tuple[float, float]] = None) -> np.ndarray:
+        kx, ky = (self.kick_x, self.kick_y) if kick_angles is None else kick_angles
         new_state = state.copy()
-        new_state[1, 0] += k
+        new_state[1, 0] += kx
+        new_state[3, 0] += ky
         return new_state
 
 

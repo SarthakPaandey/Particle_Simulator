@@ -125,13 +125,13 @@ def build_fodo_lattice(
             elements.append(Drift(name=f"Drift_{cell_idx}_A{k+1}", length=sub_len_a))
         # Focusing quad (zero-length, thin lens)
         elements.append(Quadrupole(name=f"QF_{cell_idx}", focal_length=quad_focal_length, focusing=True))
-        # Drift B (may contain correctors)
+        # Drift B (may contain correctors - horizontal correctors HCOR)
         n_corr_a = sum(1 for i in corr_indices_per_cell if i == 0)
         sub_drifts_b = max(1, n_corr_a + 1)
         sub_len_b = drift_per_section / sub_drifts_b
         elements.append(Drift(name=f"Drift_{cell_idx}_B0", length=sub_len_b))
         for k in range(n_corr_a):
-            elements.append(Corrector(name=f"COR_{cell_idx}_A{k}"))
+            elements.append(Corrector(name=f"HCOR_{cell_idx}_{k}", plane="x"))
             elements.append(Drift(name=f"Drift_{cell_idx}_B{k+1}", length=sub_len_b))
 
         # --- Second half: DRIFT (with possible BPM) - QD - DRIFT (with possible CORRECTOR) ---
@@ -145,13 +145,13 @@ def build_fodo_lattice(
             elements.append(Drift(name=f"Drift_{cell_idx}_C{k+1}", length=sub_len_c))
         # Defocusing quad
         elements.append(Quadrupole(name=f"QD_{cell_idx}", focal_length=quad_focal_length, focusing=False))
-        # Drift D
+        # Drift D (may contain correctors - vertical correctors VCOR)
         n_corr_b = sum(1 for i in corr_indices_per_cell if i == 1)
         sub_drifts_d = max(1, n_corr_b + 1)
         sub_len_d = drift_per_section / sub_drifts_d
         elements.append(Drift(name=f"Drift_{cell_idx}_D0", length=sub_len_d))
         for k in range(n_corr_b):
-            elements.append(Corrector(name=f"COR_{cell_idx}_B{k}"))
+            elements.append(Corrector(name=f"VCOR_{cell_idx}_{k}", plane="y"))
             elements.append(Drift(name=f"Drift_{cell_idx}_D{k+1}", length=sub_len_d))
 
     return Lattice(elements)

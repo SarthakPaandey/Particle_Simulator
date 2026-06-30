@@ -1,8 +1,3 @@
-"""Orbit Correction Visualisation Helpers (Plotly-based, Streamlit-friendly).
-
-These functions build interactive Plotly charts that match the dashboard
-look-and-feel and don't require a browser roundtrip.
-"""
 from __future__ import annotations
 
 from typing import Optional, Sequence
@@ -10,6 +5,7 @@ from typing import Optional, Sequence
 import numpy as np
 import plotly.graph_objects as go
 import plotly.io as pio
+from plotly.subplots import make_subplots
 
 pio.templates.default = "plotly_white"
 
@@ -20,85 +16,163 @@ def orbit_figure(
     distorted_x: np.ndarray,
     corrected_x: np.ndarray | dict[str, np.ndarray],
     bpm_s: np.ndarray,
-    bpm_distorted: np.ndarray,
-    bpm_corrected: np.ndarray | dict[str, np.ndarray],
-    corrector_s: Optional[Sequence[float]] = None,
+    bpm_distorted_x: np.ndarray,
+    bpm_corrected_x: np.ndarray | dict[str, np.ndarray],
+    ideal_y: np.ndarray,
+    distorted_y: np.ndarray,
+    corrected_y: np.ndarray | dict[str, np.ndarray],
+    bpm_distorted_y: np.ndarray,
+    bpm_corrected_y: np.ndarray | dict[str, np.ndarray],
+    hcor_s: Optional[Sequence[float]] = None,
+    vcor_s: Optional[Sequence[float]] = None,
 ) -> "go.Figure":
-    fig = go.Figure()
-    
-    # Plot ideal orbit
+    # Build a stacked layout with shared X axis
+    fig = make_subplots(
+        rows=2, cols=1,
+        shared_xaxes=True,
+        vertical_spacing=0.08,
+        subplot_titles=("Horizontal Plane (x)", "Vertical Plane (y)")
+    )
+
+    # Standard colors and symbols for correction methods
+    method_styles = {
+        "least-squares": dict(color="#1f77b4", symbol="square"),
+        "SVD": dict(color="#9467bd", symbol="diamond"),
+        "iterative-SVD": dict(color="#2ca02c", symbol="triangle-up"),
+        "micado": dict(color="#ff7f0e", symbol="x")
+    }
+
+    # =========================================================================
+    # ROW 1: Horizontal Plane (x)
+    # =========================================================================
     fig.add_trace(go.Scatter(
         x=s, y=ideal_x * 1000, mode="lines",
         line=dict(color="black", dash="dash", width=1.5),
-        name="Ideal Orbit",
-    ))
-    
-    # Plot distorted orbit
+        legendgroup="Ideal", name="Ideal Orbit",
+    ), row=1, col=1)
+
     fig.add_trace(go.Scatter(
         x=s, y=distorted_x * 1000, mode="lines",
         line=dict(color="red", width=2),
-        name="Before Correction",
-    ))
+        legendgroup="Distorted", name="Before Correction",
+    ), row=1, col=1)
 
-    # Plot distorted BPMs
     if len(bpm_s) > 0:
         fig.add_trace(go.Scatter(
-            x=bpm_s, y=bpm_distorted * 1000,
+            x=bpm_s, y=bpm_distorted_x * 1000,
             mode="markers", marker=dict(color="red", size=8, symbol="circle"),
-            name="BPM (before)",
-        ))
+            legendgroup="BPM Distorted", name="BPM (before)",
+        ), row=1, col=1)
 
-    # Standard colors for correction methods
-    method_styles = {
-        "least-squares": dict(color="#1f77b4", symbol="square"),  # Blue
-        "SVD": dict(color="#9467bd", symbol="diamond"),          # Purple
-        "iterative-SVD": dict(color="#2ca02c", symbol="triangle-up") # Green
-    }
-
-    # Plot corrected orbits
+    # Corrected x orbits
     if isinstance(corrected_x, dict):
         for name, x_corr in corrected_x.items():
             style = method_styles.get(name, dict(color="blue", symbol="square"))
             fig.add_trace(go.Scatter(
                 x=s, y=x_corr * 1000, mode="lines",
                 line=dict(color=style["color"], width=2),
-                name=f"After {name}",
-            ))
+                legendgroup=name, name=f"After {name}",
+            ), row=1, col=1)
     else:
         fig.add_trace(go.Scatter(
             x=s, y=corrected_x * 1000, mode="lines",
             line=dict(color="#1f77b4", width=2),
-            name="After Correction",
-        ))
+            legendgroup="After Correction", name="After Correction",
+        ), row=1, col=1)
 
-    # Plot corrected BPMs
+    # Corrected x BPMs
     if len(bpm_s) > 0:
-        if isinstance(bpm_corrected, dict):
-            for name, x_bpm in bpm_corrected.items():
+        if isinstance(bpm_corrected_x, dict):
+            for name, x_bpm in bpm_corrected_x.items():
                 style = method_styles.get(name, dict(color="blue", symbol="square"))
                 fig.add_trace(go.Scatter(
                     x=bpm_s, y=x_bpm * 1000,
                     mode="markers", marker=dict(color=style["color"], size=7, symbol=style["symbol"]),
-                    name=f"BPM ({name})",
-                ))
+                    legendgroup=name, name=f"BPM ({name})",
+                ), row=1, col=1)
         else:
             fig.add_trace(go.Scatter(
-                x=bpm_s, y=bpm_corrected * 1000,
+                x=bpm_s, y=bpm_corrected_x * 1000,
                 mode="markers", marker=dict(color="#1f77b4", size=8, symbol="square"),
-                name="BPM (after)",
-            ))
+                legendgroup="After Correction", name="BPM (after)",
+            ), row=1, col=1)
 
-    if corrector_s is not None:
-        for cs in corrector_s:
-            fig.add_vline(x=cs, line=dict(color="gray", width=0.5, dash="dot"))
+    # =========================================================================
+    # ROW 2: Vertical Plane (y)
+    # =========================================================================
+    fig.add_trace(go.Scatter(
+        x=s, y=ideal_y * 1000, mode="lines",
+        line=dict(color="black", dash="dash", width=1.5),
+        legendgroup="Ideal", showlegend=False,
+    ), row=2, col=1)
+
+    fig.add_trace(go.Scatter(
+        x=s, y=distorted_y * 1000, mode="lines",
+        line=dict(color="red", width=2),
+        legendgroup="Distorted", showlegend=False,
+    ), row=2, col=1)
+
+    if len(bpm_s) > 0:
+        fig.add_trace(go.Scatter(
+            x=bpm_s, y=bpm_distorted_y * 1000,
+            mode="markers", marker=dict(color="red", size=8, symbol="circle"),
+            legendgroup="BPM Distorted", showlegend=False,
+        ), row=2, col=1)
+
+    # Corrected y orbits
+    if isinstance(corrected_y, dict):
+        for name, y_corr in corrected_y.items():
+            style = method_styles.get(name, dict(color="blue", symbol="square"))
+            fig.add_trace(go.Scatter(
+                x=s, y=y_corr * 1000, mode="lines",
+                line=dict(color=style["color"], width=2),
+                legendgroup=name, showlegend=False,
+            ), row=2, col=1)
+    else:
+        fig.add_trace(go.Scatter(
+            x=s, y=corrected_y * 1000, mode="lines",
+            line=dict(color="#1f77b4", width=2),
+            legendgroup="After Correction", showlegend=False,
+        ), row=2, col=1)
+
+    # Corrected y BPMs
+    if len(bpm_s) > 0:
+        if isinstance(bpm_corrected_y, dict):
+            for name, y_bpm in bpm_corrected_y.items():
+                style = method_styles.get(name, dict(color="blue", symbol="square"))
+                fig.add_trace(go.Scatter(
+                    x=bpm_s, y=y_bpm * 1000,
+                    mode="markers", marker=dict(color=style["color"], size=7, symbol=style["symbol"]),
+                    legendgroup=name, showlegend=False,
+                ), row=2, col=1)
+        else:
+            fig.add_trace(go.Scatter(
+                x=bpm_s, y=bpm_corrected_y * 1000,
+                mode="markers", marker=dict(color="#1f77b4", size=8, symbol="square"),
+                legendgroup="After Correction", showlegend=False,
+            ), row=2, col=1)
+
+    # =========================================================================
+    # Corrector markers (vertical lines)
+    # =========================================================================
+    if hcor_s is not None:
+        for cs in hcor_s:
+            fig.add_shape(type="line", x0=cs, x1=cs, y0=-1, y1=1, xref="x", yref="paper",
+                          line=dict(color="blue", width=0.5, dash="dot"), row=1, col=1)
+    if vcor_s is not None:
+        for cs in vcor_s:
+            fig.add_shape(type="line", x0=cs, x1=cs, y0=0, y1=2, xref="x", yref="paper",
+                          line=dict(color="green", width=0.5, dash="dot"), row=2, col=1)
+
+    fig.update_yaxes(title_text="x [mm]", row=1, col=1)
+    fig.update_yaxes(title_text="y [mm]", row=2, col=1)
+    fig.update_xaxes(title_text="s [m]", row=2, col=1)
 
     fig.update_layout(
-        title="Beam Orbit (Horizontal Plane)",
-        xaxis_title="s [m]",
-        yaxis_title="x [mm]",
-        height=480,
-        legend=dict(orientation="h", y=-0.15),
-        margin=dict(l=40, r=40, t=40, b=40)
+        title="Beam Orbits (Transverse Planes)",
+        height=680,
+        legend=dict(orientation="h", y=-0.12),
+        margin=dict(l=50, r=40, t=55, b=40)
     )
     return fig
 

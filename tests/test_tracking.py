@@ -14,7 +14,7 @@ class TestTrackBeam:
             Drift("d1", length=1.0),
             BPM("b1"),
             Drift("d2", length=1.0),
-            Corrector("c1"),
+            Corrector("c1", plane="x"),
             Drift("d3", length=1.0),
             BPM("b2"),
         ]
@@ -25,12 +25,15 @@ class TestTrackBeam:
         traj = track_beam(lattice, BeamState(), None, None, False, 0.0)
         assert np.allclose(traj.x, 0.0)
         assert np.allclose(traj.xp, 0.0)
+        assert np.allclose(traj.y, 0.0)
+        assert np.allclose(traj.yp, 0.0)
 
     def test_drift_propagation(self):
         lattice = self._simple_lattice()
-        state = BeamState(x=1e-3, xp=0.0)
+        state = BeamState(x=1e-3, xp=0.0, y=2e-3, yp=0.0)
         traj = track_beam(lattice, state, None, None, False, 0.0)
         assert np.isclose(traj.x[0], 1e-3)
+        assert np.isclose(traj.y[0], 2e-3)
 
     def test_corrector_changes_angle(self):
         lattice = self._simple_lattice()
@@ -41,24 +44,28 @@ class TestTrackBeam:
 
     def test_bpm_readings_recorded(self):
         lattice = self._simple_lattice()
-        state = BeamState(x=2e-3, xp=0.0)
+        state = BeamState(x=2e-3, xp=0.0, y=1e-3, yp=0.0)
         traj = track_beam(lattice, state, None, None, False, 0.0)
-        assert len(traj.bpm_readings) == 2
+        assert len(traj.bpm_readings_x) == 2
+        assert len(traj.bpm_readings_y) == 2
 
     def test_bpm_noise(self):
         lattice = self._simple_lattice()
         rng1 = np.random.default_rng(42)
         rng2 = np.random.default_rng(42)
-        traj_no_noise = track_beam(lattice, BeamState(x=1e-3), None, None, False, 0.0, rng1)
-        traj_noise = track_beam(lattice, BeamState(x=1e-3), None, None, True, 0.1e-3, rng2)
+        traj_no_noise = track_beam(lattice, BeamState(x=1e-3, y=1e-3), None, None, False, 0.0, rng1)
+        traj_noise = track_beam(lattice, BeamState(x=1e-3, y=1e-3), None, None, True, 0.1e-3, rng2)
         assert not np.allclose(traj_no_noise.bpm_x_positions, traj_noise.bpm_x_positions)
+        assert not np.allclose(traj_no_noise.bpm_y_positions, traj_noise.bpm_y_positions)
 
     def test_error_kicks(self):
         lattice = self._simple_lattice()
-        kicks = np.zeros(len(lattice))
-        kicks[0] = 0.1e-3
+        kicks = np.zeros((2, len(lattice)))
+        kicks[0, 0] = 0.1e-3
+        kicks[1, 0] = 0.05e-3
         traj = track_beam(lattice, BeamState(), None, kicks, False, 0.0)
         assert traj.x[-1] != 0.0 or traj.xp[-1] != 0.0
+        assert traj.y[-1] != 0.0 or traj.yp[-1] != 0.0
 
 
 class TestResponseMatrix:
@@ -67,7 +74,7 @@ class TestResponseMatrix:
         R = compute_response_matrix(lattice, delta_theta=1e-4)
         n_bpm = len(lattice.bpms)
         n_corr = len(lattice.correctors)
-        assert R.shape == (n_bpm, n_corr)
+        assert R.shape == (2 * n_bpm, n_corr)
 
     def test_nonzero(self):
         lattice = build_fodo_lattice(n_cells=4)
@@ -87,21 +94,23 @@ class TestLatticeErrorKicks:
         from src.elements import Quadrupole
         lattice = build_fodo_lattice(n_cells=4)
         kicks = generate_lattice_error_kicks(lattice, error_sigma=1e-3, kick_type="quads", seed=42)
-        assert len(kicks) == len(lattice)
+        assert kicks.shape == (2, len(lattice))
         
         # Verify non-quad elements have exactly 0 error kick
         for idx, el in enumerate(lattice.elements):
             if not isinstance(el, Quadrupole):
-                assert kicks[idx] == 0.0
+                assert kicks[0, idx] == 0.0
+                assert kicks[1, idx] == 0.0
             else:
                 # Quadrupoles should have random kicks (non-zero with high probability)
-                assert kicks[idx] != 0.0 or el.focal_length == 0.0
+                assert kicks[0, idx] != 0.0 or el.focal_length == 0.0
+                assert kicks[1, idx] != 0.0 or el.focal_length == 0.0
 
     def test_all_elements_kicks(self):
         from src.errors import generate_lattice_error_kicks
         lattice = build_fodo_lattice(n_cells=4)
         kicks = generate_lattice_error_kicks(lattice, error_sigma=1e-3, kick_type="all", seed=42)
-        assert len(kicks) == len(lattice)
-        # With high probability, drifts (which make up a large portion of elements) are non-zero
-        assert np.any(kicks != 0.0)
+        assert kicks.shape == (2, len(lattice))
+        assert np.any(kicks[0] != 0.0)
+        assert np.any(kicks[1] != 0.0)
 

@@ -37,7 +37,7 @@ def generate_lattice_error_kicks(
     kick_type: str = "quads",
     seed: Optional[int] = None,
 ) -> np.ndarray:
-    """Generate Gaussian random error kicks mapped to specific lattice elements.
+    """Generate Gaussian random error kicks mapped to specific lattice elements in 4D.
 
     Parameters
     ----------
@@ -51,9 +51,10 @@ def generate_lattice_error_kicks(
 
     Returns
     -------
-    kicks : np.ndarray, shape (len(lattice),)
+    kicks : np.ndarray, shape (2, len(lattice))
+        Row 0: horizontal kicks, Row 1: vertical kicks.
     """
-    kicks = np.zeros(len(lattice))
+    kicks = np.zeros((2, len(lattice)))
     if error_sigma <= 0:
         return kicks
 
@@ -62,7 +63,8 @@ def generate_lattice_error_kicks(
 
     for idx, el in enumerate(lattice.elements):
         if kick_type == "all" or (kick_type == "quads" and isinstance(el, Quadrupole)):
-            kicks[idx] = rng.normal(0.0, error_sigma)
+            kicks[0, idx] = rng.normal(0.0, error_sigma)
+            kicks[1, idx] = rng.normal(0.0, error_sigma)
     return kicks
 
 
