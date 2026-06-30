@@ -79,7 +79,7 @@ class TestSVDCorrection:
 class TestIterativeCorrection:
     def test_runs(self, sim_setup):
         lattice, traj, R, kicks, rng = sim_setup
-        c, rms_hist, niters = iterative_correction(
+        c, rms_hist, traj_hist, c_hist, niters = iterative_correction(
             lattice,
             BeamState(x=2e-3, xp=0.1e-3, y=1e-3, yp=-0.05e-3),
             R,
@@ -93,10 +93,12 @@ class TestIterativeCorrection:
         )
         assert niters >= 1
         assert len(rms_hist) >= 2
+        assert len(traj_hist) >= 2
+        assert len(c_hist) >= 2
 
     def test_limited_correctors(self, sim_setup):
         lattice, traj, R, kicks, rng = sim_setup
-        c, rms_hist, _ = iterative_correction(
+        c, rms_hist, _, _, _ = iterative_correction(
             lattice,
             BeamState(x=2e-3, xp=0.1e-3, y=1e-3, yp=-0.05e-3),
             R,

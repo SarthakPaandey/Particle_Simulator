@@ -121,6 +121,8 @@ def iterative_correction(
 
     c = np.zeros(len(lattice.correctors))
     rms_history: list = []
+    traj_history: list = []
+    c_history: list = []
 
     for iteration in range(max_iterations + 1):
         traj = track_beam(
@@ -132,6 +134,8 @@ def iterative_correction(
             bpm_noise_sigma=bpm_noise_sigma,
             rng=rng,
         )
+        traj_history.append(traj)
+        c_history.append(c.copy())
 
         # Concatenate horizontal and vertical readings
         bpm_error = np.concatenate([traj.bpm_x_positions, traj.bpm_y_positions])
@@ -154,7 +158,7 @@ def iterative_correction(
         if apply_limits:
             c = np.clip(c, -corrector_limit, corrector_limit)
 
-    return c, np.array(rms_history), len(rms_history) - 1
+    return c, np.array(rms_history), traj_history, c_history, len(rms_history) - 1
 
 
 def micado_correction(

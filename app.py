@@ -1,4 +1,4 @@
-"""Particle Beam Orbit Correction Simulator — Interactive Dashboard.
+"""Particle Beam Orbit Correction Simulator — Interactive Dashboard (4D & MICADO).
 
 Run with:  streamlit run app.py
 """
@@ -239,7 +239,7 @@ traj_svd = track_beam(
 )
 
 # 3. Iterative SVD
-c_iter, rms_history, niters = iterative_correction(
+c_iter, rms_history, traj_history, c_history, niters = iterative_correction(
     lattice, initial_state, R,
     method="svd",
     gain=float(gain),
@@ -295,6 +295,8 @@ all_methods = {
         "c_star": c_iter,
         "traj": traj_iter,
         "rms_history": rms_history,
+        "traj_history": traj_history,
+        "c_history": c_history,
         "niters": niters,
     },
     "MICADO": {
@@ -331,7 +333,6 @@ for name, m_data in all_methods.items():
         else:
             status = "Max Iters Reached"
     elif name == "MICADO":
-        # Count non-zero correctors
         n_act = np.sum(~np.isclose(m_data["c_star"], 0.0))
         status = f"Active: {n_act}"
         
@@ -356,178 +357,312 @@ df_compare = pd.DataFrame(metrics_compare)
 st.title("⚛  4D Particle Beam Orbit Correction Simulator")
 st.markdown(
     """
-    This dashboard simulates **coupled transverse (4D) beam orbit distortion** in a FODO accelerator lattice. 
-    It compares **least-squares**, **SVD truncation**, **iterative feedback**, and **MICADO** algorithms 
-    in both horizontal ($x$) and vertical ($y$) planes.
+    Explore transverse beam dynamics and steering algorithms on FODO lattices. Adjust parameters in the sidebar 
+    and navigate through the tabs below to step through the accelerator physics process.
     """
 )
 
-# ============================================================================
-# Section 1 — Project Overview
-# ============================================================================
-with st.expander("📖  Project Overview & 4D Optics Mathematical Model", expanded=False):
-    col_info1, col_info2 = st.columns(2)
-    with col_info1:
-        st.markdown(
-            """
-            ### 4D Phase Space Optics
-            The beam state is represented in 4D transverse phase space:
-            $$X = [x, x', y, y']^T$$
-            
-            We propagate using 4x4 transfer matrices:
-            - **Drift space** of length $L$:
-              $$M_{\\text{drift}} = \\begin{pmatrix} 1 & L & 0 & 0 \\\\ 0 & 1 & 0 & 0 \\\\ 0 & 0 & 1 & L \\\\ 0 & 0 & 0 & 1 \\end{pmatrix}$$
-            - **Quadrupole (Thin Lens)** focuses in one plane and defocuses in the other:
-              $$M_{\\text{QF}} = \\begin{pmatrix} 1 & 0 & 0 & 0 \\\\ -1/f & 1 & 0 & 0 \\\\ 0 & 0 & 1 & 0 \\\\ 0 & 0 & 1/f & 1 \\end{pmatrix},\\quad M_{\\text{QD}} = \\begin{pmatrix} 1 & 0 & 0 & 0 \\\\ 1/f & 1 & 0 & 0 \\\\ 0 & 0 & 1 & 0 \\\\ 0 & 0 & -1/f & 1 \\end{pmatrix}$$
-            """
-        )
-    with col_info2:
-        st.markdown(
-            """
-            ### Orbit Correction & Algorithms
-            - **BPMs** measure both $x_i$ and $y_i$. The BPM error vector has size $2N$: $b = [x_1, \\dots, x_N, y_1, \\dots, y_N]^T$.
-            - **HCORs** (horizontal correctors) and **VCORs** (vertical correctors) apply kicks to $x'$ and $y'$ respectively.
-            - **MICADO (CERN-standard):** An iterative matching algorithm that activates correctors one-by-one, selecting the single corrector at each step that minimizes the remaining sum-of-squares:
-              $$\\text{argmin}_{c_{j}} \\|R c + b\\|^2$$
-              It keeps corrector usage sparse and efficient.
-            """
-        )
+# Set up tabs
+tabs = st.tabs([
+    "🔬 1. Design & Lattice Layout",
+    "⚠️ 2. Orbit Distortion & Errors",
+    "🗺️ 3. Response Matrix Explorer",
+    "🎯 4. Correction & Comparison",
+    "🔁 5. Iterative Feedback Player"
+])
 
-# ============================================================================
-# Section 2 — Lattice layout
-# ============================================================================
-st.subheader("Accelerator Lattice Layout")
 bpm_s = np.array([bpm.s for bpm in lattice.bpms])
 hcor_s = [c.s for c in lattice.correctors if c.plane == "x"]
 vcor_s = [c.s for c in lattice.correctors if c.plane == "y"]
 
-# Display lattice layout
-fig_lattice = lattice_layout_figure(lattice.s_positions, bpm_s, np.array(hcor_s + vcor_s))
-st.plotly_chart(fig_lattice, use_container_width=True)
-
-st.caption(
-    f"Lattice Circumference: **{lattice.total_length():.2f} m**  |  "
-    f"Elements: **{len(lattice)}**  |  "
-    f"BPMs: **{len(lattice.bpms)}**  |  "
-    f"Horizontal Correctors (HCOR): **{len(hcor_s)}**  |  "
-    f"Vertical Correctors (VCOR): **{len(vcor_s)}**"
-)
-
-# ============================================================================
-# Section 3 — Orbit visualization
-# ============================================================================
-st.subheader("Beam Trajectories & 4D Orbit Correction")
-
-# Gather orbits mapping method names
-corrected_x_dict = {name: m["traj"].x for name, m in all_methods.items()}
-corrected_y_dict = {name: m["traj"].y for name, m in all_methods.items()}
-corrected_bpm_x_dict = {name: m["traj"].bpm_x_positions for name, m in all_methods.items()}
-corrected_bpm_y_dict = {name: m["traj"].bpm_y_positions for name, m in all_methods.items()}
-
-fig_orbit = orbit_figure(
-    s=traj_ideal.s,
-    ideal_x=traj_ideal.x,
-    distorted_x=traj_distorted.x,
-    corrected_x=corrected_x_dict,
-    bpm_s=traj_distorted.bpm_s_positions,
-    bpm_distorted_x=traj_distorted.bpm_x_positions,
-    bpm_corrected_x=corrected_bpm_x_dict,
-    ideal_y=traj_ideal.y,
-    distorted_y=traj_distorted.y,
-    corrected_y=corrected_y_dict,
-    bpm_distorted_y=traj_distorted.bpm_y_positions,
-    bpm_corrected_y=corrected_bpm_y_dict,
-    hcor_s=hcor_s,
-    vcor_s=vcor_s,
-)
-st.plotly_chart(fig_orbit, use_container_width=True)
-
-# ============================================================================
-# Section 4 — Method Comparison Table & Selected Iterative Convergence
-# ============================================================================
-col_table, col_status = st.columns([5, 3])
-
-with col_table:
-    st.subheader("Performance Comparison Table")
-    st.dataframe(
-        df_compare.set_index("Method"), 
-        use_container_width=True,
+# ----------------------------------------------------------------------------
+# TAB 1: Baseline Design & Lattice
+# ----------------------------------------------------------------------------
+with tabs[0]:
+    st.header("Lattice Design & Baseline Configuration")
+    st.markdown(
+        """
+        The baseline configuration displays the perfect nominal design structure of the accelerator. 
+        Before errors are introduced, the beam follows the perfect design **Reference Orbit** ($x = 0, y = 0$ everywhere).
+        """
     )
     
-with col_status:
-    st.subheader("Selected Method Status")
-    
-    # Selected details card
-    sel_bpm = np.concatenate([traj_corrected_selected.bpm_x_positions, traj_corrected_selected.bpm_y_positions])
-    sel_rms = rms_error(sel_bpm * 1000)
-    sel_max = max_abs_error(sel_bpm * 1000)
-    sel_improve = improvement(rms_before_mm, sel_rms)
-    
-    st.markdown(
-        f"""
-        **Selected Method:** `{selected_method}`
+    col_l1, col_l2 = st.columns([5, 3])
+    with col_l1:
+        # Plot ideal orbit
+        fig_ideal = orbit_figure(
+            s=traj_ideal.s,
+            ideal_x=traj_ideal.x,
+            distorted_x=traj_ideal.x,
+            corrected_x={},
+            bpm_s=bpm_s,
+            bpm_distorted_x=np.zeros_like(bpm_s),
+            bpm_corrected_x={},
+            ideal_y=traj_ideal.y,
+            distorted_y=traj_ideal.y,
+            corrected_y={},
+            bpm_distorted_y=np.zeros_like(bpm_s),
+            bpm_corrected_y={},
+            hcor_s=hcor_s,
+            vcor_s=vcor_s,
+        )
+        st.plotly_chart(fig_ideal, use_container_width=True)
         
-        - Stacked RMS Orbit: **{sel_rms:.3f} mm** *(Before: {rms_before_mm:.3f} mm)*
-        - Peak Orbit Deviation: **{sel_max:.3f} mm** *(Before: {max_before_mm:.3f} mm)*
-        - Correction Efficiency: **{sel_improve:.1f}%**
-        """
-    )
-    
-    # Iterative/MICADO convergence details
-    if selected_method == "iterative-SVD" and rms_history is not None:
-        if sel_rms < float(tolerance_mm):
-            st.success(f"✅ Converged to {sel_rms:.3f} mm (< {tolerance_mm} mm) in {niters} iterations!")
-        else:
-            st.warning(f"⚠️ Failed to converge within tolerance ({tolerance_mm} mm) after {max_iterations} iterations. Residual RMS: {sel_rms:.3f} mm")
-    elif selected_method == "MICADO":
-        n_act = np.sum(~np.isclose(c_star_selected, 0.0))
-        st.success(f"🎯 MICADO successfully corrected the orbit using only **{n_act}** active correctors out of {len(c_star_selected)}!")
-    else:
-        st.info("ℹ️ Least-Squares and SVD are direct matrix inverse methods and resolve in a single step.")
+    with col_l2:
+        st.markdown("### 📋 Lattice Characteristics")
+        st.markdown(
+            f"""
+            - **Total Circumference:** `{lattice.total_length():.2f} m`
+            - **Lattice Elements:** `{len(lattice)}` total
+            - **FODO Cells:** `{n_cells}` cells
+            - **Quadrupoles:** `{2 * n_cells}` (focusing QF & defocusing QD)
+            - **BPM Diagnostics:** `{len(lattice.bpms)}` dual-plane monitors
+            - **Steering Correctors:** `{len(hcor_s)}` Horizontal (HCOR) + `{len(vcor_s)}` Vertical (VCOR)
+            """
+        )
+        st.markdown("### 🔬 Baseline Lattice Elements Map")
+        fig_lattice = lattice_layout_figure(lattice.s_positions, bpm_s, np.array(hcor_s + vcor_s))
+        st.plotly_chart(fig_lattice, use_container_width=True)
 
-# ============================================================================
-# Section 5 — Response matrix & singular values
-# ============================================================================
-col_rm, col_sv = st.columns(2)
-
-with col_rm:
-    st.subheader("Response Matrix & Numerical Stability")
-    fig_rm = response_figure(R)
-    st.plotly_chart(fig_rm, use_container_width=True)
-    
+# ----------------------------------------------------------------------------
+# TAB 2: Orbit Distortion & Errors
+# ----------------------------------------------------------------------------
+with tabs[1]:
+    st.header("Orbit Distortion & Error Representation")
     st.markdown(
-        f"""
-        - **Condition Number ($\\kappa$):** `{cond_number:.2e}`
+        """
+        Small alignment or magnetic field errors at the quadrupole magnets impart transverse angular kicks. 
+        Coupled with the initial beam offset and angle, this causes the beam to deviate from the reference path.
         """
     )
-    if cond_number > 1e4:
-        st.warning("⚠️ High Condition Number: System is ill-conditioned! Least-squares corrections may amplify noise excessively. SVD truncation is highly recommended.")
+    
+    col_dist1, col_dist2 = st.columns([5, 2])
+    with col_dist1:
+        # Distorted orbit plot
+        fig_distorted = orbit_figure(
+            s=traj_ideal.s,
+            ideal_x=traj_ideal.x,
+            distorted_x=traj_distorted.x,
+            corrected_x={},
+            bpm_s=bpm_s,
+            bpm_distorted_x=traj_distorted.bpm_x_positions,
+            bpm_corrected_x={},
+            ideal_y=traj_ideal.y,
+            distorted_y=traj_distorted.y,
+            corrected_y={},
+            bpm_distorted_y=traj_distorted.bpm_y_positions,
+            bpm_corrected_y={},
+            hcor_s=hcor_s,
+            vcor_s=vcor_s,
+        )
+        st.plotly_chart(fig_distorted, use_container_width=True)
+        
+    with col_dist2:
+        st.markdown("### ⚠️ Orbit Deviation Metrics")
+        
+        # Display Metrics Cards
+        st.markdown(
+            f"""
+            <div class="metric-card">
+                <div class="metric-label">Stacked RMS Orbit Error</div>
+                <div class="metric-value">{rms_before_mm:.3f} mm</div>
+            </div>
+            <br>
+            <div class="metric-card">
+                <div class="metric-label">Peak Horiz. Offset (Max |x|)</div>
+                <div class="metric-value">{max_abs_error(traj_distorted.x * 1000):.3f} mm</div>
+            </div>
+            <br>
+            <div class="metric-card">
+                <div class="metric-label">Peak Vert. Offset (Max |y|)</div>
+                <div class="metric-value">{max_abs_error(traj_distorted.y * 1000):.3f} mm</div>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+
+# ----------------------------------------------------------------------------
+# TAB 3: Response Matrix Explorer
+# ----------------------------------------------------------------------------
+with tabs[2]:
+    st.header("Response Matrix & Corrector Physics")
+    st.markdown(
+        """
+        The **Response Matrix** $R$ represents the linear mapping from corrector strengths $c$ to BPM readings $b$. 
+        Each column represents how the beam orbit responds to a single corrector magnet.
+        """
+    )
+    
+    col_rm1, col_rm2 = st.columns([1, 1])
+    with col_rm1:
+        st.subheader("Response Matrix Heatmap")
+        fig_rm = response_figure(R)
+        st.plotly_chart(fig_rm, use_container_width=True)
+        
+        st.markdown(f"- **Condition Number ($\\kappa$):** `{cond_number:.2e}`")
+        if cond_number > 1e4:
+            st.warning("⚠️ High Condition Number: System is ill-conditioned! Least-squares corrections may amplify noise excessively. SVD truncation is highly recommended.")
+        else:
+            st.success("✅ System is well-conditioned. Numerical correction is stable.")
+
+    with col_rm2:
+        st.subheader("🔍 Interactive Corrector Response Explorer")
+        st.markdown(
+            """
+            Select any corrector magnet and set a test-kick. 
+            The plot will display the optical **response function** of the beam to *only* this kick (this represents a single column of $R$).
+            """
+        )
+        selected_corr = st.selectbox(
+            "Select corrector to test-kick:", 
+            lattice.correctors, 
+            format_func=lambda c: f"{c.name} ({c.plane.upper()}-plane corrector at s={c.s:.2f} m)"
+        )
+        test_kick_val_mrad = st.number_input("Test-kick magnitude [mrad]", value=0.5, step=0.1)
+        
+        # Compute single-kick response
+        test_kick_rad = test_kick_val_mrad * 1e-3
+        test_strengths = np.zeros(len(lattice.correctors))
+        test_strengths[selected_corr.index] = test_kick_rad
+        
+        traj_test_kick = track_beam(
+            lattice, BeamState(),
+            corrector_strengths=test_strengths,
+            error_kicks=np.zeros((2, len(lattice))),
+            add_noise=False,
+            bpm_noise_sigma=0.0,
+            rng=rng
+        )
+        
+        # Plot test kick
+        fig_test_kick = orbit_figure(
+            s=traj_ideal.s,
+            ideal_x=traj_ideal.x,
+            distorted_x=traj_test_kick.x,
+            corrected_x={},
+            bpm_s=bpm_s,
+            bpm_distorted_x=traj_test_kick.bpm_x_positions,
+            bpm_corrected_x={},
+            ideal_y=traj_ideal.y,
+            distorted_y=traj_test_kick.y,
+            corrected_y={},
+            bpm_distorted_y=traj_test_kick.bpm_y_positions,
+            bpm_corrected_y={},
+            hcor_s=[selected_corr.s] if selected_corr.plane == "x" else [],
+            vcor_s=[selected_corr.s] if selected_corr.plane == "y" else [],
+        )
+        st.plotly_chart(fig_test_kick, use_container_width=True)
+
+# ----------------------------------------------------------------------------
+# TAB 4: Correction & Comparison
+# ----------------------------------------------------------------------------
+with tabs[3]:
+    st.header("Correction Comparison & Solver Results")
+    st.markdown(
+        """
+        Compare the final corrected orbits resulting from **Least-Squares**, **SVD truncation**, 
+        **Iterative Feedback**, and **MICADO** algorithms under identical error conditions.
+        """
+    )
+    
+    col_comp1, col_comp2 = st.columns([5, 3])
+    with col_comp1:
+        # Gather corrected orbits for all methods
+        corrected_x_dict = {name: m["traj"].x for name, m in all_methods.items()}
+        corrected_y_dict = {name: m["traj"].y for name, m in all_methods.items()}
+        corrected_bpm_x_dict = {name: m["traj"].bpm_x_positions for name, m in all_methods.items()}
+        corrected_bpm_y_dict = {name: m["traj"].bpm_y_positions for name, m in all_methods.items()}
+
+        fig_compare_orbit = orbit_figure(
+            s=traj_ideal.s,
+            ideal_x=traj_ideal.x,
+            distorted_x=traj_distorted.x,
+            corrected_x=corrected_x_dict,
+            bpm_s=bpm_s,
+            bpm_distorted_x=traj_distorted.bpm_x_positions,
+            bpm_corrected_x=corrected_bpm_x_dict,
+            ideal_y=traj_ideal.y,
+            distorted_y=traj_distorted.y,
+            corrected_y=corrected_y_dict,
+            bpm_distorted_y=traj_distorted.bpm_y_positions,
+            bpm_corrected_y=corrected_bpm_y_dict,
+            hcor_s=hcor_s,
+            vcor_s=vcor_s,
+        )
+        st.plotly_chart(fig_compare_orbit, use_container_width=True)
+        
+    with col_comp2:
+        st.subheader("Performance Comparison Table")
+        st.dataframe(df_compare.set_index("Method"), use_container_width=True)
+        
+        st.subheader("Singular Value Spectrum")
+        fig_sv = singular_values_figure(s_svd, cutoff=float(svd_cutoff), n_keep=n_singular_val)
+        st.plotly_chart(fig_sv, use_container_width=True)
+
+# ----------------------------------------------------------------------------
+# TAB 5: Iterative Feedback Player
+# ----------------------------------------------------------------------------
+with tabs[4]:
+    st.header("Step-by-Step Iterative Feedback Player")
+    st.markdown(
+        """
+        Iterative feedback corrections apply corrections scaled by a gain factor $\\alpha$. 
+        Drag the slider below to step through each iteration and watch the closed orbit converge to the reference path.
+        """
+    )
+    
+    # Retrieve iterative history data
+    rms_history_iter = all_methods["iterative-SVD"]["rms_history"]
+    traj_history_iter = all_methods["iterative-SVD"]["traj_history"]
+    c_history_iter = all_methods["iterative-SVD"]["c_history"]
+    
+    if rms_history_iter is not None and len(rms_history_iter) > 0:
+        iter_step = st.slider(
+            "Select Iteration Step:", 
+            0, len(rms_history_iter) - 1, 0
+        )
+        st.markdown(f"**Step Details:** Iteration `{iter_step}` / `{len(rms_history_iter) - 1}` (RMS Orbit: `{rms_history_iter[iter_step]:.3f}` mm)")
+        
+        # Display alert status for the selected step
+        step_rms = rms_history_iter[iter_step]
+        if step_rms < float(tolerance_mm):
+            st.success(f"✅ Step {iter_step} has converged! RMS: {step_rms:.3f} mm (< {tolerance_mm} mm)")
+        else:
+            st.warning(f"⚠️ Step {iter_step} is not yet converged. RMS: {step_rms:.3f} mm (>= {tolerance_mm} mm)")
+            
+        col_play1, col_play2 = st.columns([5, 3])
+        with col_play1:
+            traj_step = traj_history_iter[iter_step]
+            
+            fig_iter_orbit = orbit_figure(
+                s=traj_ideal.s,
+                ideal_x=traj_ideal.x,
+                distorted_x=traj_distorted.x, # Keep distorted as reference
+                corrected_x=traj_step.x,
+                bpm_s=bpm_s,
+                bpm_distorted_x=traj_distorted.bpm_x_positions,
+                bpm_corrected_x=traj_step.bpm_x_positions,
+                ideal_y=traj_ideal.y,
+                distorted_y=traj_distorted.y,
+                corrected_y=traj_step.y,
+                bpm_distorted_y=traj_distorted.bpm_y_positions,
+                bpm_corrected_y=traj_step.bpm_y_positions,
+                hcor_s=hcor_s,
+                vcor_s=vcor_s,
+            )
+            st.plotly_chart(fig_iter_orbit, use_container_width=True)
+            
+        with col_play2:
+            st.markdown(f"**Corrector Strengths at Step {iter_step}**")
+            c_step = c_history_iter[iter_step]
+            fig_iter_corr = corrector_bar_figure(c_step)
+            st.plotly_chart(fig_iter_corr, use_container_width=True)
+            
+            # Simple metrics at this step
+            c_norm_step_mrad = float(np.linalg.norm(c_step) * 1000)
+            st.metric("Corrector Norm ‖c‖", f"{c_norm_step_mrad:.3f} mrad")
     else:
-        st.success("✅ System is well-conditioned. Numerical correction is stable.")
-
-with col_sv:
-    st.subheader("Singular Value Spectrum")
-    fig_sv = singular_values_figure(s_svd, cutoff=float(svd_cutoff), n_keep=n_singular_val)
-    st.plotly_chart(fig_sv, use_container_width=True)
-
-# ============================================================================
-# Section 6 — Corrector strengths & Convergence details
-# ============================================================================
-col_corr, col_conv = st.columns(2)
-
-with col_corr:
-    st.subheader("Corrector Strengths (Selected Method)")
-    fig_corr = corrector_bar_figure(c_star_selected)
-    st.plotly_chart(fig_corr, use_container_width=True)
-
-with col_conv:
-    if selected_method == "iterative-SVD" and rms_history is not None:
-        st.subheader("Iterative Convergence History")
-        fig_conv = convergence_figure(rms_history)
-        st.plotly_chart(fig_conv, use_container_width=True)
-    else:
-        st.subheader("Correction Info")
-        st.info("Select `iterative-SVD` under Configuration -> Correction Settings to view convergence history.")
+        st.info("No iterative correction history found.")
 
 # ============================================================================
 # Section 7 — Export Results
