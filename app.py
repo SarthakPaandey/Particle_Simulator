@@ -497,7 +497,7 @@ with col_rm:
     
     st.markdown(
         f"""
-        - **Condition Number ($\kappa$):** `{cond_number:.2e}`
+        - **Condition Number ($\\kappa$):** `{cond_number:.2e}`
         """
     )
     if cond_number > 1e4:
