@@ -68,5 +68,40 @@ def generate_lattice_error_kicks(
     return kicks
 
 
-__all__ = ["generate_error_kicks", "generate_lattice_error_kicks"]
+def apply_lattice_element_errors(
+    lattice: "Lattice",  # noqa: F821
+    sigma_quad_dx: float = 0.0,
+    sigma_quad_dy: float = 0.0,
+    sigma_quad_tilt: float = 0.0,
+    sigma_bpm_offset: float = 0.0,
+    sigma_bpm_gain: float = 0.0,
+    seed: Optional[int] = None,
+) -> None:
+    """Generate and apply physical alignment & calibration errors directly to elements.
+
+    Modifies the lattice in-place.
+    """
+    rng = np.random.default_rng(seed)
+    from .elements import Quadrupole, BPM
+    
+    for el in lattice.elements:
+        if isinstance(el, Quadrupole):
+            el.dx = rng.normal(0.0, sigma_quad_dx) if sigma_quad_dx > 0 else 0.0
+            el.dy = rng.normal(0.0, sigma_quad_dy) if sigma_quad_dy > 0 else 0.0
+            el.tilt = rng.normal(0.0, sigma_quad_tilt) if sigma_quad_tilt > 0 else 0.0
+        elif isinstance(el, BPM):
+            el.dx = rng.normal(0.0, sigma_bpm_offset) if sigma_bpm_offset > 0 else 0.0
+            el.dy = rng.normal(0.0, sigma_bpm_offset) if sigma_bpm_offset > 0 else 0.0
+            el.gain_x = 1.0 + rng.normal(0.0, sigma_bpm_gain) if sigma_bpm_gain > 0 else 1.0
+            el.gain_y = 1.0 + rng.normal(0.0, sigma_bpm_gain) if sigma_bpm_gain > 0 else 1.0
+        else:
+            if hasattr(el, 'dx'):
+                el.dx = 0.0
+            if hasattr(el, 'dy'):
+                el.dy = 0.0
+            if hasattr(el, 'tilt'):
+                el.tilt = 0.0
+
+
+__all__ = ["generate_error_kicks", "generate_lattice_error_kicks", "apply_lattice_element_errors"]
 

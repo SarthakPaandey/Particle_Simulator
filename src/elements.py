@@ -60,11 +60,20 @@ class Quadrupole(Element):
         Focal length magnitude (meters); sign handled by ``focusing``.
     focusing : bool
         If True, the magnet focuses in the horizontal plane (and defocuses in the vertical plane).
+    dx : float
+        Horizontal alignment offset (meters).
+    dy : float
+        Vertical alignment offset (meters).
+    tilt : float
+        Roll (skew) angle (radians).
     """
 
     focal_length: float = 1.0
     focusing: bool = True
     kind: str = "quadrupole"
+    dx: float = 0.0
+    dy: float = 0.0
+    tilt: float = 0.0
 
     def __post_init__(self) -> None:
         if self.focal_length == 0:
@@ -76,15 +85,30 @@ class Quadrupole(Element):
         M = np.eye(4)
         M[1, 0] = inv_f_x
         M[3, 2] = inv_f_y
+
+        if self.tilt != 0.0:
+            c = np.cos(self.tilt)
+            s = np.sin(self.tilt)
+            R = np.zeros((4, 4))
+            R[0, 0] = c;  R[0, 2] = s
+            R[1, 1] = c;  R[1, 3] = s
+            R[2, 0] = -s; R[2, 2] = c
+            R[3, 1] = -s; R[3, 3] = c
+            M = R.T @ M @ R
+
         return M
 
 
 @dataclass
 class BPM(Element):
-    """Beam Position Monitor: records beam x & y-position, no optics."""
+    """Beam Position Monitor: records beam x & y-position with gains and offsets."""
 
     kind: str = "bpm"
     index: int = -1  # Filled by the lattice builder
+    dx: float = 0.0
+    dy: float = 0.0
+    gain_x: float = 1.0
+    gain_y: float = 1.0
 
     def matrix(self) -> np.ndarray:
         return np.eye(4)

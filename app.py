@@ -23,7 +23,7 @@ if str(_PROJECT_ROOT) not in sys.path:
 from src.beam import BeamState
 from src.lattice import Lattice, build_fodo_lattice
 from src.tracking import track_beam, compute_response_matrix
-from src.errors import generate_lattice_error_kicks
+from src.errors import generate_lattice_error_kicks, apply_lattice_element_errors
 from src.correction import least_squares_correction, svd_correction, iterative_correction, micado_correction
 from src.metrics import rms_error, max_abs_error, improvement
 from src.plotly_viz import (
@@ -79,6 +79,10 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+# Initialize Session State for Live Calibrated Response Matrix
+if "measured_R" not in st.session_state:
+    st.session_state["measured_R"] = None
+
 # ============================================================================
 # Sidebar — all user-configurable parameters
 # ============================================================================
@@ -116,7 +120,17 @@ with st.sidebar:
             st.session_state["random_seed"] = int(np.random.default_rng().integers(1, 100000))
             st.rerun()
 
-    add_random_errors = st.checkbox("Add random lattice errors", value=True)
+    st.subheader("Quadrupole Errors")
+    sigma_quad_dx_mm = st.number_input("Quad alignment σ_x [mm]", value=0.05, step=0.01, min_value=0.0)
+    sigma_quad_dy_mm = st.number_input("Quad alignment σ_y [mm]", value=0.05, step=0.01, min_value=0.0)
+    sigma_quad_tilt_mrad = st.number_input("Quad roll σ_roll [mrad]", value=0.5, step=0.1, min_value=0.0)
+
+    st.subheader("BPM Diagnostics Calibration")
+    sigma_bpm_offset_mm = st.number_input("BPM offset σ [mm]", value=0.1, step=0.02, min_value=0.0)
+    sigma_bpm_gain_pct = st.number_input("BPM gain error σ [%]", value=2.0, step=0.5, min_value=0.0)
+
+    st.subheader("General Dipole Errors")
+    add_random_errors = st.checkbox("Add random element kicks", value=True)
     error_kick_sigma_mrad = st.number_input("Error kick σ [mrad]", value=0.05, step=0.01, min_value=0.0)
     error_placement = st.selectbox("Error kick placement", ["Quadrupoles Only", "All Elements"])
     
@@ -155,6 +169,23 @@ lattice = build_fodo_lattice(
     quad_focal_length=float(quad_focal_length),
     bpms_per_cell=int(bpms_per_cell),
     correctors_per_cell=int(correctors_per_cell),
+)
+
+# Apply direct element errors (quad displacements/rolls and BPM gains/offsets)
+sigma_quad_dx = float(sigma_quad_dx_mm) * 1e-3
+sigma_quad_dy = float(sigma_quad_dy_mm) * 1e-3
+sigma_quad_tilt = float(sigma_quad_tilt_mrad) * 1e-3
+sigma_bpm_offset = float(sigma_bpm_offset_mm) * 1e-3
+sigma_bpm_gain = float(sigma_bpm_gain_pct) / 100.0
+
+apply_lattice_element_errors(
+    lattice,
+    sigma_quad_dx=sigma_quad_dx,
+    sigma_quad_dy=sigma_quad_dy,
+    sigma_quad_tilt=sigma_quad_tilt,
+    sigma_bpm_offset=sigma_bpm_offset,
+    sigma_bpm_gain=sigma_bpm_gain,
+    seed=st.session_state["random_seed"]
 )
 
 # ── Initial beam state ─────────────────────────────────
@@ -203,6 +234,11 @@ R = compute_response_matrix(
     bpm_noise_sigma=noise_sigma_m,
     rng=rng,
 )
+
+# Override with live-measured RM if available in state
+if st.session_state["measured_R"] is not None:
+    R = st.session_state["measured_R"]
+
 _, s_svd, _ = np.linalg.svd(R, full_matrices=False)
 cond_number = float(s_svd[0] / s_svd[-1]) if len(s_svd) > 0 and s_svd[-1] > 0 else float("inf")
 
@@ -368,7 +404,8 @@ tabs = st.tabs([
     "⚠️ 2. Orbit Distortion & Errors",
     "🗺️ 3. Response Matrix Explorer",
     "🎯 4. Correction & Comparison",
-    "🔁 5. Iterative Feedback Player"
+    "🔁 5. Iterative Feedback Player",
+    "📊 6. Performance Sweeps & L-Curve"
 ])
 
 bpm_s = np.array([bpm.s for bpm in lattice.bpms])
@@ -504,6 +541,39 @@ with tabs[2]:
             st.warning("⚠️ High Condition Number: System is ill-conditioned! Least-squares corrections may amplify noise excessively. SVD truncation is highly recommended.")
         else:
             st.success("✅ System is well-conditioned. Numerical correction is stable.")
+
+        # Live RM Calibration Panel
+        st.subheader("⚡ Live Calibration Scan")
+        st.markdown(
+            """
+            In an operational facility, the Response Matrix is measured by applying kicks on the physical machine, 
+            which introduces BPM diagnostic noise. Compare the noisy response with the theoretical one.
+            """
+        )
+        if st.session_state["measured_R"] is not None:
+            st.info("⚠️ Currently using measured Response Matrix (with noise) for correction solvers.")
+        else:
+            st.success("✅ Currently using theoretical (noise-free) Response Matrix for correction solvers.")
+
+        col_cal1, col_cal2 = st.columns(2)
+        with col_cal1:
+            if st.button("⚡ Calibrate RM on Live Machine", use_container_width=True):
+                with st.spinner("Perturbing correctors with active noise..."):
+                    R_meas = compute_response_matrix(
+                        lattice, delta_theta=delta_theta_rad,
+                        additive_noise=True,
+                        bpm_noise_sigma=noise_sigma_m,
+                        rng=np.random.default_rng(st.session_state["random_seed"])
+                    )
+                    st.session_state["measured_R"] = R_meas
+                    st.success("Live RM loaded successfully!")
+                    st.rerun()
+        with col_cal2:
+            if st.session_state["measured_R"] is not None:
+                if st.button("🔄 Reset to Theoretical RM", use_container_width=True):
+                    st.session_state["measured_R"] = None
+                    st.info("Reset to theoretical RM complete.")
+                    st.rerun()
 
     with col_rm2:
         st.subheader("🔍 Interactive Corrector Response Explorer")
@@ -663,6 +733,166 @@ with tabs[4]:
             st.metric("Corrector Norm ‖c‖", f"{c_norm_step_mrad:.3f} mrad")
     else:
         st.info("No iterative correction history found.")
+
+# ----------------------------------------------------------------------------
+# TAB 6: Sweeps & L-Curve
+# ----------------------------------------------------------------------------
+with tabs[5]:
+    st.header("Closed-Orbit Performance Parameter Sweeps")
+    st.markdown(
+        """
+        Study the sensitivity and stability of orbit correction algorithms by sweeping physics parameters 
+        such as alignment errors, diagnostic noise, and optimizer configurations.
+        """
+    )
+    
+    sweep_param = st.selectbox(
+        "Select Parameter to Sweep:",
+        [
+            "BPM Noise [mm]",
+            "BPM Offset [mm]",
+            "Quadrupole Alignment [mm]",
+            "MICADO Correctors Kept",
+            "SVD Singular Values Kept"
+        ]
+    )
+    
+    if st.button("▶ Run Parameter Sweep", use_container_width=True):
+        with st.spinner(f"Simulating parameter sweep over {sweep_param}..."):
+            if sweep_param == "BPM Noise [mm]":
+                sweep_vals = np.linspace(0.0, 0.1, 10)
+                param_label = "BPM Noise σ [mm]"
+            elif sweep_param == "BPM Offset [mm]":
+                sweep_vals = np.linspace(0.0, 0.3, 10)
+                param_label = "BPM Offset σ [mm]"
+            elif sweep_param == "Quadrupole Alignment [mm]":
+                sweep_vals = np.linspace(0.0, 0.2, 10)
+                param_label = "Quadrupole Alignment σ [mm]"
+            elif sweep_param == "MICADO Correctors Kept":
+                sweep_vals = np.arange(1, min(15, len(lattice.correctors)) + 1)
+                param_label = "MICADO Correctors Kept"
+            else:
+                sweep_vals = np.arange(1, min(15, len(s_svd)) + 1)
+                param_label = "SVD Singular Values Kept"
+                
+            rms_results = []
+            corr_norms = []
+            
+            for val in sweep_vals:
+                # Build fresh temp lattice
+                temp_lattice = build_fodo_lattice(
+                    n_cells=int(n_cells),
+                    drift_length=float(drift_length),
+                    quad_focal_length=float(quad_focal_length),
+                    bpms_per_cell=int(bpms_per_cell),
+                    correctors_per_cell=int(correctors_per_cell)
+                )
+                
+                s_quad_dx = sigma_quad_dx
+                s_quad_dy = sigma_quad_dy
+                s_quad_tilt = sigma_quad_tilt
+                s_bpm_offset = sigma_bpm_offset
+                s_bpm_gain = sigma_bpm_gain
+                s_bpm_noise = noise_sigma_m
+                
+                if sweep_param == "BPM Noise [mm]":
+                    s_bpm_noise = val * 1e-3
+                elif sweep_param == "BPM Offset [mm]":
+                    s_bpm_offset = val * 1e-3
+                elif sweep_param == "Quadrupole Alignment [mm]":
+                    s_quad_dx = val * 1e-3
+                    s_quad_dy = val * 1e-3
+                    
+                apply_lattice_element_errors(
+                    temp_lattice,
+                    sigma_quad_dx=s_quad_dx,
+                    sigma_quad_dy=s_quad_dy,
+                    sigma_quad_tilt=s_quad_tilt,
+                    sigma_bpm_offset=s_bpm_offset,
+                    sigma_bpm_gain=s_bpm_gain,
+                    seed=42
+                )
+                
+                # Track uncorrected
+                traj_dist = track_beam(
+                    temp_lattice, initial_state,
+                    corrector_strengths=None,
+                    error_kicks=kicks,
+                    add_noise=True,
+                    bpm_noise_sigma=s_bpm_noise,
+                    rng=np.random.default_rng(42)
+                )
+                
+                temp_bpm_err = np.concatenate([traj_dist.bpm_x_positions, traj_dist.bpm_y_positions])
+                
+                # Correct
+                if sweep_param == "MICADO Correctors Kept":
+                    c_sweep, _ = micado_correction(R, temp_bpm_err, n_correctors=int(val), limit=corr_limit_rad if apply_limits else None)
+                elif sweep_param == "SVD Singular Values Kept":
+                    c_sweep, *_ = svd_correction(R, temp_bpm_err, cutoff=float(svd_cutoff), n_singular=int(val), limit=corr_limit_rad if apply_limits else None)
+                else:
+                    c_sweep, *_ = least_squares_correction(R, temp_bpm_err, limit=corr_limit_rad if apply_limits else None)
+                    
+                # Track corrected
+                traj_corr = track_beam(
+                    temp_lattice, initial_state,
+                    corrector_strengths=c_sweep,
+                    error_kicks=kicks,
+                    add_noise=True,
+                    bpm_noise_sigma=s_bpm_noise,
+                    rng=np.random.default_rng(42)
+                )
+                
+                bpm_corr = np.concatenate([traj_corr.bpm_x_positions, traj_corr.bpm_y_positions])
+                rms_val = rms_error(bpm_corr * 1000.0)
+                rms_results.append(rms_val)
+                corr_norms.append(np.linalg.norm(c_sweep) * 1000.0)
+                
+            col_sw1, col_sw2 = st.columns([1, 1])
+            with col_sw1:
+                import plotly.graph_objects as go
+                fig_sweep = go.Figure()
+                fig_sweep.add_trace(go.Scatter(
+                    x=sweep_vals,
+                    y=rms_results,
+                    mode='lines+markers',
+                    line=dict(color='#2ca02c', width=3),
+                    marker=dict(size=8),
+                    name='Residual RMS'
+                ))
+                fig_sweep.update_layout(
+                    title=f"Residual Orbit RMS vs. {param_label}",
+                    xaxis_title=param_label,
+                    yaxis_title="Residual Orbit RMS [mm]",
+                    template="plotly_white",
+                    height=450
+                )
+                st.plotly_chart(fig_sweep, use_container_width=True)
+                
+            with col_sw2:
+                if sweep_param == "MICADO Correctors Kept":
+                    st.subheader("⚖️ Corrector Strength vs. Orbit Error (L-Curve)")
+                    fig_lcurve = go.Figure()
+                    fig_lcurve.add_trace(go.Scatter(
+                        x=corr_norms,
+                        y=rms_results,
+                        text=[f"Keep: {int(k)}" for k in sweep_vals],
+                        mode='lines+markers+text',
+                        textposition="top right",
+                        line=dict(color='#d62728', width=3),
+                        marker=dict(size=8, symbol='diamond'),
+                        name='L-Curve'
+                    ))
+                    fig_lcurve.update_layout(
+                        title="L-Curve Optimization (MICADO)",
+                        xaxis_title="Corrector Kick Norm ‖c‖ [mrad]",
+                        yaxis_title="Residual Orbit RMS [mm]",
+                        template="plotly_white",
+                        height=450
+                    )
+                    st.plotly_chart(fig_lcurve, use_container_width=True)
+                else:
+                    st.info("The L-curve trade-off representation is specific to corrector sparsity sweeps (like MICADO). Select 'MICADO Correctors Kept' to view the L-curve knee.")
 
 # ============================================================================
 # Section 7 — Export Results

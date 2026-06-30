@@ -67,6 +67,24 @@ class TestTrackBeam:
         assert traj.x[-1] != 0.0 or traj.xp[-1] != 0.0
         assert traj.y[-1] != 0.0 or traj.yp[-1] != 0.0
 
+    def test_quadrupole_displacements(self):
+        # Displaced quadrupole should act as a dipole steering kick
+        q = Quadrupole("qf", focal_length=1.0, focusing=True, dx=1e-3)
+        d = Drift("d", length=0.0)
+        lattice = Lattice([q, d])
+        traj = track_beam(lattice, BeamState(), None, None, False, 0.0)
+        # xp_kick = dx/f = 1 mrad
+        assert np.isclose(traj.xp[-1], 1e-3)
+
+    def test_bpm_gain_offset(self):
+        b = BPM("bpm", dx=0.5e-3, gain_x=2.0)
+        lattice = Lattice([b])
+        # Beam starting with x = 1.0mm
+        state = BeamState(x=1e-3)
+        traj = track_beam(lattice, state, None, None, False, 0.0)
+        # Measured: gain_x * (x_true - dx) = 2.0 * (1mm - 0.5mm) = 1.0mm
+        assert np.isclose(traj.bpm_x_positions[0], 1.0e-3)
+
 
 class TestResponseMatrix:
     def test_shape(self):

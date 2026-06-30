@@ -5,7 +5,7 @@ import numpy as np
 from typing import List, Optional, Tuple
 
 from .beam import BeamState
-from .elements import BPM, Corrector, ErrorKick, Element
+from .elements import BPM, Corrector, ErrorKick, Element, Quadrupole
 from .lattice import Lattice
 
 
@@ -96,7 +96,12 @@ def track_beam(
         traj.y[idx] = float(state[2, 0])
         traj.yp[idx] = float(state[3, 0])
 
-        state = element.matrix() @ state
+        M = element.matrix()
+        if isinstance(element, Quadrupole) and (element.dx != 0.0 or element.dy != 0.0):
+            d = np.array([[element.dx], [0.0], [element.dy], [0.0]])
+            state = M @ state + (np.eye(4) - M) @ d
+        else:
+            state = M @ state
 
         kx = 0.0
         ky = 0.0
@@ -129,9 +134,14 @@ def track_beam(
             if add_noise and bpm_noise_sigma > 0:
                 noise_x = float(rng.normal(0.0, bpm_noise_sigma))
                 noise_y = float(rng.normal(0.0, bpm_noise_sigma))
+            
+            # Apply BPM gain and offset calibration
+            x_meas = element.gain_x * (x_true - element.dx) + noise_x
+            y_meas = element.gain_y * (y_true - element.dy) + noise_y
+
             traj._bpm_elements.append(element)
-            traj.bpm_readings_x.append(x_true + noise_x)
-            traj.bpm_readings_y.append(y_true + noise_y)
+            traj.bpm_readings_x.append(x_meas)
+            traj.bpm_readings_y.append(y_meas)
 
     return traj
 

@@ -55,6 +55,13 @@ class TestQuadrupole:
         with pytest.raises(ValueError):
             Quadrupole("q", focal_length=0.0)
 
+    def test_rolled_quadrupole_coupling(self):
+        q = Quadrupole("q_skew", focal_length=1.0, focusing=True, tilt=np.pi / 4.0)
+        M = q.matrix()
+        # Verify off-diagonal cross-plane coupling terms are non-zero
+        assert not np.isclose(M[1, 2], 0.0)
+        assert not np.isclose(M[3, 0], 0.0)
+
 
 class TestBPM:
     def test_identity_matrix(self):
